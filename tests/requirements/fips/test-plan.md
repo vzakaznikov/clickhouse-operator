@@ -34,6 +34,29 @@ The goal is to verify that FIPS-enabled builds of the operator and metrics-expor
 **Boundary:** The operator and metrics-exporter run in the same pod. Internal IPC between them
 is localhost HTTP and is not subject to FIPS TLS requirements.
 
+```mermaid
+flowchart LR
+    subgraph pod["Pod"]
+        op["clickhouse-operator"]
+        me["metrics-exporter"]
+        op <-->|"HTTP localhost"| me
+    end
+
+    k8s["Kubernetes API"]
+    ch["ClickHouse Server"]
+    zk["ZooKeeper/Keeper"]
+    prom["Prometheus"]
+
+    op -->|"TLS"| k8s
+    op -->|"TLS"| ch
+    op -->|"TLS"| zk
+    prom -->|"HTTP (bug)"| op
+
+    me -->|"TLS"| k8s
+    me -->|"TLS"| ch
+    prom -->|"HTTP (bug)"| me
+```
+
 ## Configuration Requirements
 
 Plain HTTP/TCP on any external connection is a configuration error for FIPS compliance.
@@ -177,7 +200,7 @@ inbound and outbound connections for both clickhouse-operator and metrics-export
 | Direction | Target | Protocol | Default Port | TLS Support |
 |-----------|--------|----------|--------------|-------------|
 | Outbound | Kubernetes API Server | HTTPS | 443 | Yes (client-go) |
-| Outbound | ClickHouse Server | HTTP/HTTPS | 8123/8443 | **FIPS Gap** - no TLS config |
+| Outbound | ClickHouse Server | HTTP/HTTPS | 8123/8443 | Yes, inherits from `chop.Config()` |
 | Inbound | Prometheus scrape | HTTP | 8888 `/metrics` | **FIPS Gap** - needs TLS |
 | Inbound | Operator IPC | HTTP | 8888 `/chi` | No (same pod, localhost) |
 
@@ -192,7 +215,7 @@ inbound and outbound connections for both clickhouse-operator and metrics-export
 
 **Exporter to ClickHouse Server**
 
-> **FIPS Gap:** Uses plain `http.Client{}`. No TLS config, no minVersion control, no cipher enforcement.
+> Uses shared `clickhouse.Connection` with TLS from `chop.Config()`. No per-exporter minVersion control.
 
 | Test Assertion | Description | Expected Result |
 |----------------|-------------|-----------------|
