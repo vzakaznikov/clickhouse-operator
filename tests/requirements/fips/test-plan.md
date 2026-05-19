@@ -18,8 +18,9 @@
 * 7 [metrics-exporter Connections](#metrics-exporter-connections)
 * 8 [Integrity Check Failure](#integrity-check-failure)
 * 9 [CAST Failure](#cast-failure)
-* 10 [CI/CD Image and Policy Verification](#cicd-image-and-policy-verification)
-* 11 [(Optional) ACVP Algorithm Validation](#optional-acvp-algorithm-validation)
+* 10 [Synthetic TLS Cipher Validation](#synthetic-tls-cipher-validation)
+* 11 [CI/CD Image and Policy Verification](#cicd-image-and-policy-verification)
+* 12 [(Optional) ACVP Algorithm Validation](#optional-acvp-algorithm-validation)
 
 ## Introduction
 
@@ -215,7 +216,8 @@ inbound and outbound connections for both clickhouse-operator and metrics-export
 
 **Exporter to ClickHouse Server**
 
-> Uses shared `clickhouse.Connection` with TLS from `chop.Config()`. No per-exporter minVersion control.
+> TLS supported via `chop.Config()`, but `ChSchemeAuto` prefers HTTP if both ports available.
+> Must configure `scheme: https` explicitly for FIPS compliance.
 
 | Test Assertion | Description | Expected Result |
 |----------------|-------------|-----------------|
@@ -266,6 +268,49 @@ Requires: `readelf` (binutils), `python3`
 Use `GODEBUG=failfipscast=<name>` to simulate CAST failures.
 
 Available CAST names: see `$GOROOT/src/crypto/internal/fips140test/cast_test.go` (`allCASTs` variable).
+
+## Synthetic TLS Cipher Validation
+
+**Objective:** Validate FIPS cipher enforcement on all external (to the pod) connections (see [diagram](#introduction)) using `openssl s_client` and `openssl s_server`.
+
+**Procedure:**
+
+Use `openssl` to simulate connections with specific ciphers and verify the operator/exporter
+accepts FIPS-approved ciphers and rejects non-approved ones.
+
+```bash
+# Example: Test operator as TLS client against server offering only approved cipher
+openssl s_server -accept 8443 -cert server.crt -key server.key \
+  -ciphersuites TLS_AES_256_GCM_SHA384
+
+# Example: Test operator as TLS client against server offering non-approved cipher  
+openssl s_server -accept 8443 -cert server.crt -key server.key \
+  -cipher ECDHE-RSA-CHACHA20-POLY1305
+
+# Example: Test inbound connection to operator/exporter metrics endpoint
+openssl s_client -connect localhost:9999 -cipher ECDHE-RSA-AES256-GCM-SHA384
+```
+
+**Test Matrix:**
+
+| Connection | Role | Tool | Test |
+|------------|------|------|------|
+| Operator to K8s API | Client | `openssl s_server` | Each approved cipher succeeds |
+| Operator to K8s API | Client | `openssl s_server` | Each non-approved cipher rejected |
+| Operator to ClickHouse | Client | `openssl s_server` | Each approved cipher succeeds |
+| Operator to ClickHouse | Client | `openssl s_server` | Each non-approved cipher rejected |
+| Operator to ZK/Keeper | Client | `openssl s_server` | Each approved cipher succeeds |
+| Operator to ZK/Keeper | Client | `openssl s_server` | Each non-approved cipher rejected |
+| Operator metrics :9999 | Server | `openssl s_client` | Each approved cipher succeeds |
+| Operator metrics :9999 | Server | `openssl s_client` | Each non-approved cipher rejected |
+| Exporter to K8s API | Client | `openssl s_server` | Each approved cipher succeeds |
+| Exporter to K8s API | Client | `openssl s_server` | Each non-approved cipher rejected |
+| Exporter to ClickHouse | Client | `openssl s_server` | Each approved cipher succeeds |
+| Exporter to ClickHouse | Client | `openssl s_server` | Each non-approved cipher rejected |
+| Exporter metrics :8888 | Server | `openssl s_client` | Each approved cipher succeeds |
+| Exporter metrics :8888 | Server | `openssl s_client` | Each non-approved cipher rejected |
+
+See [FIPS 140-3 Valid TLS Cipher Suites](#fips-140-3-valid-tls-cipher-suites) for approved and non-approved cipher lists.
 
 ## CI/CD Image and Policy Verification
 
