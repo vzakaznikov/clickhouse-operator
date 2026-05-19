@@ -16,10 +16,10 @@
 * 5 [FIPS 140-3 Valid TLS Cipher Suites](#fips-140-3-valid-tls-cipher-suites)
 * 6 [clickhouse-operator Connections](#clickhouse-operator-connections)
 * 7 [metrics-exporter Connections](#metrics-exporter-connections)
-* 8 [Self-Test and Integrity Verification](#self-test-and-integrity-verification)
-* 9 [CI/CD Image and Policy Verification](#cicd-image-and-policy-verification)
-* 10 [(Optional) ACVP Algorithm Validation](#optional-acvp-algorithm-validation)
-* 11 [Known FIPS Gaps](#known-fips-gaps)
+* 8 [Integrity Check Failure](#integrity-check-failure)
+* 9 [CAST Failure](#cast-failure)
+* 10 [CI/CD Image and Policy Verification](#cicd-image-and-policy-verification)
+* 11 [(Optional) ACVP Algorithm Validation](#optional-acvp-algorithm-validation)
 
 ## Introduction
 
@@ -55,7 +55,7 @@ TLS must be enabled for all connections to:
 **Build requirement:** `GOFIPS140=v1.0.0` (or `certified`)
 
 | Test Assertion | Description | Expected Result |
-|-----------|-------------|-----------------|
+|----------------|-------------|-----------------|
 | Operator version | Run `clickhouse-operator --version` or check logs | Output includes FIPS indicator |
 | Metrics exporter version | Run `metrics-exporter --version` or check logs | Output includes FIPS indicator |
 | Build flag | Run `go version -m <binary>` | Shows `GOFIPS140=v1.0.0` |
@@ -67,7 +67,7 @@ TLS must be enabled for all connections to:
 **Objective:** Verify the project test suite runs in strict FIPS mode.
 
 | Test Assertion | Description | Expected Result |
-|-----------|-------------|-----------------|
+|----------------|-------------|-----------------|
 | Strict mode smoke test | Run all e2e tests with `GODEBUG=fips140=only` enabled | No panic/crash and no test regressions caused by strict FIPS mode |
 
 ## FIPS 140-3 Valid TLS Cipher Suites
@@ -127,7 +127,7 @@ inbound and outbound connections for both clickhouse-operator and metrics-export
 **Operator to Kubernetes API**
 
 | Test Assertion | Description | Expected Result |
-|-----------|-------------|-----------------|
+|----------------|-------------|-----------------|
 | Operator FIPS cipher to K8s | Operator connects with FIPS-approved cipher | Connection succeeds |
 | Operator non-FIPS cipher to K8s | K8s API only offers non-approved cipher | Operator rejects connection |
 | `security.kubernetes.tls.minVersion=1.2` | Enforce TLS 1.2 minimum | TLS 1.1 rejected |
@@ -136,7 +136,7 @@ inbound and outbound connections for both clickhouse-operator and metrics-export
 **Operator to ClickHouse Server**
 
 | Test Assertion | Description | Expected Result |
-|-----------|-------------|-----------------|
+|----------------|-------------|-----------------|
 | Operator FIPS cipher to CH | Operator connects with FIPS-approved cipher | Connection succeeds |
 | Operator non-FIPS cipher to CH | Server only offers non-approved cipher | Operator rejects connection |
 | `security.clickhouse.tls.minVersion=1.2` | Enforce TLS 1.2 minimum | TLS 1.1 rejected |
@@ -145,7 +145,7 @@ inbound and outbound connections for both clickhouse-operator and metrics-export
 **Operator to ZooKeeper/Keeper**
 
 | Test Assertion | Description | Expected Result |
-|-----------|-------------|-----------------|
+|----------------|-------------|-----------------|
 | Operator FIPS cipher to ZK | Operator connects with FIPS-approved cipher | Connection succeeds |
 | Operator non-FIPS cipher to ZK | ZK only offers non-approved cipher | Operator rejects connection |
 | `security.zookeeper.tls.minVersion=1.2` | Enforce TLS 1.2 minimum | TLS 1.1 rejected |
@@ -156,7 +156,7 @@ inbound and outbound connections for both clickhouse-operator and metrics-export
 > Same pod, localhost - HTTP acceptable. Token auth via `security.ipc.mode=Secure`.
 
 | Test Assertion | Description | Expected Result |
-|-----------|-------------|-----------------|
+|----------------|-------------|-----------------|
 | Operator IPC + `security.ipc.mode=Secure` | HTTP with token auth enabled | Works correctly |
 
 **Operator Prometheus Metrics (:9999)**
@@ -164,7 +164,7 @@ inbound and outbound connections for both clickhouse-operator and metrics-export
 > **FIPS Gap:** Currently HTTP-only. Requires TLS for FIPS compliance.
 
 | Test Assertion | Description | Expected Result |
-|-----------|-------------|-----------------|
+|----------------|-------------|-----------------|
 | Operator metrics FIPS cipher | Scrape with FIPS-approved cipher | Connection succeeds |
 | Operator metrics non-FIPS cipher | Scrape with non-approved cipher | Connection rejected |
 
@@ -177,21 +177,25 @@ inbound and outbound connections for both clickhouse-operator and metrics-export
 | Direction | Target | Protocol | Default Port | TLS Support |
 |-----------|--------|----------|--------------|-------------|
 | Outbound | Kubernetes API Server | HTTPS | 443 | Yes (client-go) |
-| Outbound | ClickHouse Server | HTTP/HTTPS | 8123/8443 | Yes, inherits `security.clickhouse.tls` |
+| Outbound | ClickHouse Server | HTTP/HTTPS | 8123/8443 | **FIPS Gap** - no TLS config |
 | Inbound | Prometheus scrape | HTTP | 8888 `/metrics` | **FIPS Gap** - needs TLS |
 | Inbound | Operator IPC | HTTP | 8888 `/chi` | No (same pod, localhost) |
 
 **Exporter to Kubernetes API**
 
+> Uses client-go defaults. No minVersion control exposed.
+
 | Test Assertion | Description | Expected Result |
-|-----------|-------------|-----------------|
+|----------------|-------------|-----------------|
 | Exporter FIPS cipher to K8s | Exporter connects with FIPS-approved cipher | Connection succeeds |
 | Exporter non-FIPS cipher to K8s | K8s API only offers non-approved cipher | Exporter rejects connection |
 
 **Exporter to ClickHouse Server**
 
+> **FIPS Gap:** Uses plain `http.Client{}`. No TLS config, no minVersion control, no cipher enforcement.
+
 | Test Assertion | Description | Expected Result |
-|-----------|-------------|-----------------|
+|----------------|-------------|-----------------|
 | Exporter FIPS cipher to CH | Exporter queries with FIPS-approved cipher | Connection succeeds |
 | Exporter non-FIPS cipher to CH | Server only offers non-approved cipher | Exporter rejects connection |
 
@@ -200,34 +204,52 @@ inbound and outbound connections for both clickhouse-operator and metrics-export
 > **FIPS Gap:** Currently HTTP-only. Requires TLS for FIPS compliance.
 
 | Test Assertion | Description | Expected Result |
-|-----------|-------------|-----------------|
+|----------------|-------------|-----------------|
 | Exporter metrics FIPS cipher | Scrape with FIPS-approved cipher | Connection succeeds |
 | Exporter metrics non-FIPS cipher | Scrape with non-approved cipher | Connection rejected |
 
 **Exporter IPC Endpoint (:8888/chi)**
 
-> Same pod, localhost - HTTP acceptable. Token auth via `security.ipc.mode=Secure`.
+> Covered by Operator IPC tests above. Same pod, localhost.
+
+## Integrity Check Failure
+
+**Objective:** Verify FIPS integrity self-test detects binary tampering.
 
 | Test Assertion | Description | Expected Result |
-|-----------|-------------|-----------------|
-| Exporter IPC + `security.ipc.mode=Secure` | HTTP with token auth enabled | Works correctly |
+|----------------|-------------|-----------------|
+| Corrupted binary | XOR byte in `.go.fipsinfo` section and execute | Panic: `fips140: verification mismatch` |
 
-## Self-Test and Integrity Verification
+**Procedure:**
 
-**Objective:** Verify FIPS self-test and integrity checks.
+Flip one byte in the `.go.fipsinfo` embedded HMAC to trigger integrity check failure at init:
+
+1. Locate `.go.fipsinfo` section offset: `readelf -S -W <binary>`
+2. XOR byte at offset+16 (first byte of 32-byte HMAC after 16-byte magic)
+3. Run tampered binary - expect panic: `fips140: verification mismatch`
+
+Requires: `readelf` (binutils), `python3`
+
+## CAST Failure
+
+**Objective:** Verify FIPS Cryptographic Algorithm Self-Test (CAST) detects failures.
 
 | Test Assertion | Description | Expected Result |
-|-----------|-------------|-----------------|
-| Corrupted binary | Modify binary bytes and execute | Refuses to run, reports integrity failure |
-| CAST failure | Trigger known-answer test failure | Process terminates with CAST error |
-| Self-test timing | Self-test runs at process start | Completes before K8s API calls |
+|----------------|-------------|-----------------|
+| CAST failure | Trigger known-answer test failure via `GODEBUG=failfipscast=<name>` | Process terminates with CAST error |
+
+**Procedure:**
+
+Use `GODEBUG=failfipscast=<name>` to simulate CAST failures.
+
+Available CAST names: see `$GOROOT/src/crypto/internal/fips140test/cast_test.go` (`allCASTs` variable).
 
 ## CI/CD Image and Policy Verification
 
 **Objective:** Add CI/CD jobs to validate FIPS image build, image supply-chain checks, and `security.fips.images.policy` enforcement.
 
 | Test Assertion | Description | Expected Result |
-|-----------|-------------|-----------------|
+|----------------|-------------|-----------------|
 | Operator FIPS image build | Build clickhouse-operator with FIPS tags | Image builds successfully |
 | Exporter FIPS image build | Build metrics-exporter with FIPS tags | Image builds successfully |
 | Image vulnerability scan | Scan images with Grype | No Critical, High, or Medium vulnerabilities |
@@ -247,7 +269,7 @@ pattern used in [clickhouse-backup PR #1364](https://github.com/Altinity/clickho
 > (public-API scope; excludes ML-KEM/ML-DSA).
 
 | Test Assertion | Description | Expected Result |
-|-----------|-------------|-----------------|
+|----------------|-------------|-----------------|
 | ACVP wrapper integration | Add `acvp` subcommand to operator/exporter | ACVP subcommand responds |
 | ACVP config generation | Run `<binary> acvp getConfig` | Returns supported capabilities |
 | ACVP expected-output replay | Run pinned ACVP replay against tracked config | All configured suites match expected output |
@@ -259,14 +281,3 @@ Covered suite families from the tracked config (38 total):
 - AES-CBC/CTR/GCM and CMAC-AES (4)
 - KDA/PBKDF/KDF components (3), DRBG (2)
 - ECDSA/EdDSA/RSA (3), TLS 1.2/1.3 (2)
-
-## Known FIPS Gaps
-
-The following connections currently lack TLS and **must be fixed** for FIPS compliance:
-
-| Component | Endpoint | Issue |
-|-----------|----------|-------|
-| clickhouse-operator | Prometheus scrape inbound (9999) | HTTP-only, no TLS |
-| metrics-exporter | Prometheus scrape inbound (8888/metrics) | HTTP-only, no TLS |
-
-**HTTP is not acceptable for FIPS compliance.** All connections must use TLS with FIPS-approved cipher suites.
